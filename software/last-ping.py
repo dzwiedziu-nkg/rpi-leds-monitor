@@ -35,13 +35,13 @@ import datetime
 import time
 import subprocess
 import argparse
+from ping import Ping
 
 default_timeout = 60
 default_interval = 60
 
-
-last_ping_success = 0
-last_ping_error = 0
+ping = None
+output = None
 
 
 def get_parser():
@@ -58,55 +58,41 @@ def get_parser():
     return parser
 
 
-def update_last_ping_success():
-    global last_ping_success
-    last_ping_success = datetime.datetime.now().timestamp()
+def write_to_file():
+    global ping
+    global output
+
+    with open(output, 'w') as f:
+        f.write(str(ping.get_last_ping_success()) + "\t" + str(ping.get_last_ping_error()))
+    print("ping updated")
 
 
-def update_last_ping_error():
-    global last_ping_error
-    last_ping_error = datetime.datetime.now().timestamp()
-
-
-def write_to_file(file):
-    global last_ping_success
-    global last_ping_error
-
-    with open(file, 'w') as f:
-        f.write(str(last_ping_success) + "\t" + str(last_ping_error))
-
-
-def ping_loop(host, file, timeout, interval):
-    global last_ping_success
-    global last_ping_error
-
-    process = subprocess.Popen(['ping', '-i', str(interval), '-t', str(timeout), host], stdout=subprocess.PIPE)
-
-    while process.poll() is None:
-        line = process.stdout.readline()
-        if b"time=" in line:
-            update_last_ping_success()
-        elif line.startswith(b"PING"):
-            pass
-        else:
-            update_last_ping_error()
-
-        write_to_file(file)
-
-    if process.returncode != 0:
-        update_last_ping_error()
-        write_to_file(file)
-
-    return process.returncode
+def ping_restarted(code):
+    global ping
+    print("ping stops, will be restarted for: " + str(ping.interval) + " seconds" + ", error code: " + str(code))
 
 
 def main():
+    global ping
+    global output
+
     args = get_parser().parse_args()
 
-    while True:
-        ping_loop(args.host, args.output, args.timeout, args.interval)
-        print("ping stops, will be restarted for: " + str(args.interval) + " seconds")
-        time.sleep(args.interval)
+    ping = Ping(args.host, args.timeout, args.interval)
+    ping.on_update = write_to_file
+    ping.on_process_restarted = ping_restarted
+
+    output = args.output
+
+    t = ping.start()
+    try:
+        while t.isAlive():
+            print("Last success: " + str(ping.get_last_ping_success()) + ", last error: " + str(ping.get_last_ping_error()))
+            time.sleep(1)
+    except KeyboardInterrupt:
+        ping.stop()
+
+    t.join()
 
 
 if __name__ == "__main__":
